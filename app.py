@@ -21,16 +21,14 @@ def home():
 @app.route("/v1/answer", methods=["POST"])
 def answer():
     data = request.get_json(silent=True) or {}
-    query = data.get("query", "")
-    expr = normalize_query(query)
+    query = str(data.get("query", ""))
 
-    try:
-        result = eval(expr)
-        if int(result) == result:
-            result = int(result)
-        return str(result)
-    except:
-        return "Invalid query"
+    nums = list(map(int, re.findall(r'-?\d+', query)))
+    total = sum(nums)
+
+    return f"The sum is {total}.", 200, {
+        "Content-Type": "text/plain; charset=utf-8"
+    }
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
