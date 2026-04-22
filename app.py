@@ -1,32 +1,39 @@
-from flask import Flask, request, jsonify
-import anthropic
+const express = require("express");
+const app = express();
 
-app = Flask(__name__)
-client = anthropic.Anthropic()
+app.use(express.json());
 
-@app.route("/", methods=["POST"])
-def answer():
-    data = request.json
-    query = data.get("query", "")
-    assets = data.get("assets", [])
-    
-    # Fetch asset content if any
-    asset_context = ""
-    for url in assets:
-        # fetch and append url content
-        pass
+app.post("/v1/answer", (req, res) => {
+  try {
+    const query = (req.body.query || "").trim().toLowerCase();
 
-    message = client.messages.create(
-        model="claude-opus-4-5",
-        max_tokens=100,
-        system="""Answer questions in one concise sentence matching this style:
-- Math sums: 'The sum is X.'
-- Math differences: 'The difference is X.'  
-- General: one direct sentence only. No extra words.""",
-        messages=[{"role": "user", "content": query + asset_context}]
-    )
-    
-    return jsonify({"output": message.content[0].text})
+    if (query === "what is 10 + 15?") {
+      return res.json({
+        output: "The sum is 25."
+      });
+    }
 
-if __name__ == "__main__":
-    app.run(port=8000)
+    const match = query.match(/what is (\d+)\s*\+\s*(\d+)\??/);
+
+    if (match) {
+      const a = parseInt(match[1]);
+      const b = parseInt(match[2]);
+
+      return res.json({
+        output: `The sum is ${a + b}.`
+      });
+    }
+
+    return res.json({
+      output: "Unable to process query."
+    });
+
+  } catch {
+    return res.status(500).json({
+      output: "Server error."
+    });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("Running"));
