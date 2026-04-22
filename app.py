@@ -15,8 +15,7 @@ def answer():
     numbers = re.findall(r"\d+", query)
     total = sum(map(int, numbers))
 
-    response = f"The sum is {total}."
-    return response, 200, {"Content-Type": "text/plain"}
+    return f"The sum is {total}.", 200, {"Content-Type": "text/plain"}
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
