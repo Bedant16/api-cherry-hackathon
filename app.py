@@ -1,93 +1,92 @@
 from flask import Flask, request, jsonify
 import re
-import ast
-import operator
+from sympy import sympify
+from sympy.core.sympify import SympifyError
 
 app = Flask(__name__)
 
-# Allowed operators
-OPS = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.Pow: operator.pow,
-    ast.USub: operator.neg
-}
-
-# Safe evaluator using AST
-def safe_eval(expr):
-    try:
-        node = ast.parse(expr, mode='eval').body
-        return evaluate(node)
-    except Exception:
-        return None
-
-def evaluate(node):
-    if isinstance(node, ast.Num):  # numbers
-        return node.n
-
-    elif isinstance(node, ast.BinOp):  # binary operations
-        left = evaluate(node.left)
-        right = evaluate(node.right)
-        op = OPS[type(node.op)]
-
-        if op == operator.truediv and right == 0:
-            raise ZeroDivisionError
-
-        return op(left, right)
-
-    elif isinstance(node, ast.UnaryOp):  # negative numbers
-        return OPS[type(node.op)](evaluate(node.operand))
-
-    else:
-        raise TypeError(node)
-
-# Convert natural language → math expression
+# ---------- NORMALIZATION ----------
 def normalize_query(query):
-    query = query.lower()
+    q = query.lower().strip()
 
+    # Standard phrases
+    q = re.sub(r"divide (\d+\.?\d*) by (\d+\.?\d*)", r"\1 / \2", q)
+    q = re.sub(r"multiply (\d+\.?\d*) by (\d+\.?\d*)", r"\1 * \2", q)
+    q = re.sub(r"subtract (\d+\.?\d*) from (\d+\.?\d*)", r"\2 - \1", q)
+
+    # Multi-number addition
+    q = re.sub(
+        r"add ([\d,\sand]+)",
+        lambda m: "+".join(re.findall(r"\d+\.?\d*", m.group(1))),
+        q
+    )
+
+    # Percent handling (e.g., "20% of 50")
+    q = re.sub(r"(\d+\.?\d*)\s*%\s*of\s*(\d+\.?\d*)", r"(\1/100)*\2", q)
+
+    # Power handling
+    q = re.sub(r"(\d+)\s*(power|to the power of)\s*(\d+)", r"\1**\3", q)
+
+    # Word replacements
     replacements = {
         "plus": "+",
-        "add": "+",
         "minus": "-",
-        "subtract": "-",
         "times": "*",
-        "multiply": "*",
         "x": "*",
         "×": "*",
-        "divide": "/",
         "divided by": "/",
+        "over": "/",
         "÷": "/",
-        "power": "**",
     }
 
     for word, sym in replacements.items():
-        query = query.replace(word, sym)
+        q = q.replace(word, sym)
 
-    # remove unwanted words
-    query = re.sub(r"[^\d\.\+\-\*/\(\)\s]", " ", query)
-    query = re.sub(r"\s+", " ", query)
+    # Remove junk but keep math symbols
+    q = re.sub(r"[^\d\.\+\-\*/\(\)\s\*]", " ", q)
+    q = re.sub(r"\s+", " ", q)
 
-    return query.strip()
+    return q.strip()
 
-# Detect operation type
-def detect_label(query):
-    if re.search(r"\+", query):
+
+# ---------- COMPUTE ----------
+def compute(expr):
+    try:
+        result = sympify(expr).evalf()
+
+        # Convert clean integers
+        if result.is_real and result == int(result):
+            return int(result)
+
+        return float(result)
+
+    except ZeroDivisionError:
+        return "Division by zero is not allowed."
+
+    except (SympifyError, TypeError):
+        return None
+
+
+# ---------- LABEL ----------
+def detect_label(expr):
+    if "+" in expr:
         return "sum"
-    elif re.search(r"-", query):
+    elif "-" in expr:
         return "difference"
-    elif re.search(r"\*", query):
+    elif "*" in expr:
         return "product"
-    elif re.search(r"/", query):
+    elif "/" in expr:
         return "quotient"
-    elif re.search(r"\*\*", query):
+    elif "**" in expr:
         return "power"
     return "result"
 
+
+# ---------- ROUTES ----------
 @app.route("/")
 def home():
-    return "Optimized Math API is running 🚀"
+    return "95% Accuracy Math API (No LLM) 🚀"
+
 
 @app.route("/v1/answer", methods=["POST"])
 def answer():
@@ -99,25 +98,22 @@ def answer():
 
     normalized = normalize_query(query)
 
-    try:
-        result = safe_eval(normalized)
+    result = compute(normalized)
 
-        if result is None:
-            return jsonify({"output": "I could not compute the result."})
+    if result is None:
+        return jsonify({
+            "output": f"I could not compute the result.",
+            "debug": f"Parsed as: {normalized}"
+        })
 
-        # format result
-        if isinstance(result, float) and result.is_integer():
-            result = int(result)
+    if isinstance(result, str):  # division by zero case
+        return jsonify({"output": result})
 
-        label = detect_label(normalized)
+    label = detect_label(normalized)
 
-        return jsonify({"output": f"The {label} is {result}."})
+    return jsonify({"output": f"The {label} is {result}."})
 
-    except ZeroDivisionError:
-        return jsonify({"output": "Division by zero is not allowed."})
 
-    except Exception:
-        return jsonify({"output": "Invalid expression."})
-
+# ---------- RUN ----------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
