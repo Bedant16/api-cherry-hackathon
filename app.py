@@ -1,77 +1,123 @@
 from flask import Flask, request, jsonify
 import re
+import ast
 import operator
 
 app = Flask(__name__)
 
-# Safely evaluate simple math expressions
+# Allowed operators
+OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+    ast.USub: operator.neg
+}
+
+# Safe evaluator using AST
 def safe_eval(expr):
-    expr = expr.strip()
-    # Handle basic operations: +, -, *, /
-    ops = {
-        '+': operator.add,
-        '-': operator.sub,
-        '*': operator.mul,
-        '×': operator.mul,
-        'x': operator.mul,
-        '/': operator.truediv,
-        '÷': operator.truediv,
+    try:
+        node = ast.parse(expr, mode='eval').body
+        return evaluate(node)
+    except Exception:
+        return None
+
+def evaluate(node):
+    if isinstance(node, ast.Num):  # numbers
+        return node.n
+
+    elif isinstance(node, ast.BinOp):  # binary operations
+        left = evaluate(node.left)
+        right = evaluate(node.right)
+        op = OPS[type(node.op)]
+
+        if op == operator.truediv and right == 0:
+            raise ZeroDivisionError
+
+        return op(left, right)
+
+    elif isinstance(node, ast.UnaryOp):  # negative numbers
+        return OPS[type(node.op)](evaluate(node.operand))
+
+    else:
+        raise TypeError(node)
+
+# Convert natural language → math expression
+def normalize_query(query):
+    query = query.lower()
+
+    replacements = {
+        "plus": "+",
+        "add": "+",
+        "minus": "-",
+        "subtract": "-",
+        "times": "*",
+        "multiply": "*",
+        "x": "*",
+        "×": "*",
+        "divide": "/",
+        "divided by": "/",
+        "÷": "/",
+        "power": "**",
     }
 
-    # Try to match: number op number (with optional spaces)
-    match = re.search(r'(-?\d+\.?\d*)\s*([+\-*/×x÷])\s*(-?\d+\.?\d*)', expr)
-    if match:
-        a = float(match.group(1))
-        op_sym = match.group(2)
-        b = float(match.group(3))
-        result = ops[op_sym](a, b)
-        # Return int if result is whole number
-        return int(result) if result == int(result) else result
+    for word, sym in replacements.items():
+        query = query.replace(word, sym)
 
-    # Fallback: sum all numbers found
-    nums = list(map(float, re.findall(r'-?\d+\.?\d*', expr)))
-    if nums:
-        total = sum(nums)
-        return int(total) if total == int(total) else total
+    # remove unwanted words
+    query = re.sub(r"[^\d\.\+\-\*/\(\)\s]", " ", query)
+    query = re.sub(r"\s+", " ", query)
 
-    return None
+    return query.strip()
 
-def format_result(result):
-    """Format result to match expected output style."""
-    if result is None:
-        return "I could not compute the result."
-    return f"The sum is {result}."
+# Detect operation type
+def detect_label(query):
+    if re.search(r"\+", query):
+        return "sum"
+    elif re.search(r"-", query):
+        return "difference"
+    elif re.search(r"\*", query):
+        return "product"
+    elif re.search(r"/", query):
+        return "quotient"
+    elif re.search(r"\*\*", query):
+        return "power"
+    return "result"
 
 @app.route("/")
 def home():
-    return "API is running"
+    return "Optimized Math API is running 🚀"
 
 @app.route("/v1/answer", methods=["POST"])
 def answer():
     data = request.get_json(silent=True) or {}
-    query = data.get("query", "").lower()
+    query = data.get("query", "")
 
-    result = safe_eval(query)
+    if not query:
+        return jsonify({"output": "Please provide a query."})
 
-    # Detect operation type for better output phrasing
-    if re.search(r'[+]|add|plus|sum|total', query):
-        label = "sum"
-    elif re.search(r'[-]|subtract|minus|difference', query):
-        label = "difference"
-    elif re.search(r'[*×x]|multiply|times|product', query):
-        label = "product"
-    elif re.search(r'[/÷]|divide|quotient', query):
-        label = "quotient"
-    else:
-        label = "sum"
+    normalized = normalize_query(query)
 
-    if result is not None:
-        val = int(result) if isinstance(result, float) and result == int(result) else result
-        response = f"The {label} is {val}."
-    else:
-        response = "I could not compute the result."
+    try:
+        result = safe_eval(normalized)
 
-    return jsonify({"output": response})
+        if result is None:
+            return jsonify({"output": "I could not compute the result."})
+
+        # format result
+        if isinstance(result, float) and result.is_integer():
+            result = int(result)
+
+        label = detect_label(normalized)
+
+        return jsonify({"output": f"The {label} is {result}."})
+
+    except ZeroDivisionError:
+        return jsonify({"output": "Division by zero is not allowed."})
+
+    except Exception:
+        return jsonify({"output": "Invalid expression."})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
